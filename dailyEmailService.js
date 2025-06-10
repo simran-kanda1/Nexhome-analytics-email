@@ -1,7 +1,7 @@
-// dailyEmailService.js
+// dailyEmailService.js - FIXED VERSION
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
-const { PipedriveAPI } = require('./pipedriveAPI'); // Adjust path as needed
+const { PipedriveAPI } = require('./pipedriveAPI');
 
 class DailyAnalyticsEmailService {
   constructor(emailConfig) {
@@ -11,32 +11,16 @@ class DailyAnalyticsEmailService {
   }
 
   setupEmailTransporter() {
-    // Configure your email service (Gmail, Outlook, etc.)
-    this.transporter = nodemailer.createTransport({
-      service: 'gmail', // or your email service
-      auth: {
-        user: this.emailConfig.user,
-        pass: this.emailConfig.password // Use app password for Gmail
-      }
-    });
-    
-    // Alternative configuration for custom SMTP
-    /*
     this.transporter = nodemailer.createTransporter({
-      host: 'your-smtp-server.com',
-      port: 587,
-      secure: false,
+      service: 'gmail',
       auth: {
         user: this.emailConfig.user,
         pass: this.emailConfig.password
       }
     });
-    */
   }
 
   startScheduler() {
-    // Schedule to run every day at 8:30 AM
-    // Format: '30 8 * * *' means: minute=30, hour=8, every day, every month, every day of week
     cron.schedule('30 8 * * *', async () => {
       console.log('Running daily analytics email at', new Date().toISOString());
       try {
@@ -45,15 +29,30 @@ class DailyAnalyticsEmailService {
         console.error('Error sending daily analytics email:', error);
       }
     }, {
-      timezone: "America/Toronto" // Adjust to your timezone
+      timezone: "America/Toronto"
     });
 
     console.log('Daily analytics email scheduler started. Will send at 8:30 AM daily.');
   }
 
+  // Helper function to normalize user ID (handle both objects and numbers)
+  normalizeUserId(userId) {
+    if (!userId) return null;
+    if (typeof userId === 'object' && userId.id) return userId.id;
+    return userId;
+  }
+
+  // Helper function to get user name
+  getUserName(userId, users) {
+    if (!userId) return 'Unknown User';
+    
+    const normalizedId = this.normalizeUserId(userId);
+    const user = users.find(u => u.id === normalizedId);
+    return user ? user.name : `User ${normalizedId}`;
+  }
+
   async fetchYesterdayAnalytics() {
     try {
-      // Get yesterday's date range
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       yesterday.setHours(0, 0, 0, 0);
@@ -68,7 +67,6 @@ class DailyAnalyticsEmailService {
 
       console.log('Fetching analytics for:', dateRange);
 
-      // Add delays between API calls to avoid rate limiting
       const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
       // Fetch all necessary data
@@ -91,21 +89,14 @@ class DailyAnalyticsEmailService {
       const users = usersResponse.data || [];
       const pipelines = pipelinesResponse.data || [];
 
-      // Fetch call activities
-      let callActivities = [];
-      try {
-        const callsResponse = await PipedriveAPI.getCallActivitiesWithDeals(dateRange.startDate, dateRange.endDate);
-        callActivities = callsResponse.data || [];
-      } catch (error) {
-        console.error('Error fetching call activities:', error);
-        callActivities = allActivities.filter(activity => 
-          activity.type === 'call' || (activity.key_string && activity.key_string.includes('call'))
-        );
-      }
+      // Filter call activities from the activities we already fetched
+      const callActivities = allActivities.filter(activity => 
+        activity.type === 'call' || (activity.key_string && activity.key_string.includes('call'))
+      );
 
       await delay(300);
 
-      // Fetch notes (with rate limiting)
+      // Fetch notes
       let notes = [];
       try {
         notes = await this.fetchNotesForDate(dateRange, allDeals);
@@ -116,7 +107,6 @@ class DailyAnalyticsEmailService {
 
       await delay(300);
 
-      // Fetch simple deal movements (deals updated yesterday)
       const dealMovements = await this.fetchDealMovements(dateRange, allDeals, pipelines);
 
       // Filter data for yesterday
@@ -138,10 +128,14 @@ class DailyAnalyticsEmailService {
         return lostDate >= startDate && lostDate <= endDate;
       });
 
-      // Activities completed yesterday
-      const completedActivities = allActivities.filter(activity => activity.done);
+      // Activities completed yesterday (filter by date properly)
+      const completedActivities = allActivities.filter(activity => {
+        if (!activity.done || !activity.marked_as_done_time) return false;
+        const completedDate = new Date(activity.marked_as_done_time);
+        return completedDate >= startDate && completedDate <= endDate;
+      });
 
-      // Calculate analytics by owner
+      // Calculate analytics by owner - FIXED
       const analyticsData = this.calculateAnalyticsByOwner({
         callActivities,
         notes,
@@ -216,9 +210,9 @@ class DailyAnalyticsEmailService {
             content: note.content || 'Note added',
             dealId: note.deal_id,
             dealTitle: deal ? deal.title : 'No Deal Associated',
-            dealOwner: deal ? deal.user_id : null,
+            dealOwner: deal ? this.normalizeUserId(deal.user_id) : null,
             addTime: note.add_time,
-            userId: note.user_id
+            userId: this.normalizeUserId(note.user_id)
           };
         });
         
@@ -244,7 +238,7 @@ class DailyAnalyticsEmailService {
         id: `deal_update_${deal.id}`,
         dealId: deal.id,
         dealTitle: deal.title,
-        dealOwner: deal.user_id,
+        dealOwner: this.normalizeUserId(deal.user_id),
         changeDescription: 'Deal updated',
         changeDate: deal.update_time,
         pipelineId: deal.pipeline_id,
@@ -257,97 +251,123 @@ class DailyAnalyticsEmailService {
     }
   }
 
+  // COMPLETELY REWRITTEN - This was the main source of duplicates
   calculateAnalyticsByOwner(data) {
     const { callActivities, notes, dealMovements, completedActivities, wonDeals, lostDeals, users } = data;
-    const ownerStats = new Map();
+    
+    // Create a map to store stats by user ID - this prevents duplicates
+    const ownerStatsMap = new Map();
 
-    // Helper function to get user name
-    const getUserName = (userId) => {
-      if (typeof userId === 'object' && userId.name) return userId.name;
-      const user = users.find(u => u.id === userId);
-      return user ? user.name : 'Unknown User';
-    };
+    // Initialize all users who appear in any activity
+    const allUserIds = new Set();
+    
+    // Collect all user IDs, normalizing them properly
+    callActivities.forEach(c => {
+      const userId = this.normalizeUserId(c.user_id);
+      if (userId) allUserIds.add(userId);
+    });
+    
+    notes.forEach(n => {
+      const userId = this.normalizeUserId(n.dealOwner || n.userId);
+      if (userId) allUserIds.add(userId);
+    });
+    
+    dealMovements.forEach(d => {
+      const userId = this.normalizeUserId(d.dealOwner);
+      if (userId) allUserIds.add(userId);
+    });
+    
+    completedActivities.forEach(a => {
+      const userId = this.normalizeUserId(a.user_id);
+      if (userId) allUserIds.add(userId);
+    });
+    
+    wonDeals.forEach(d => {
+      const userId = this.normalizeUserId(d.user_id);
+      if (userId) allUserIds.add(userId);
+    });
+    
+    lostDeals.forEach(d => {
+      const userId = this.normalizeUserId(d.user_id);
+      if (userId) allUserIds.add(userId);
+    });
 
-    // Initialize stats for all users who had activity
-    const allUserIds = new Set([
-      ...callActivities.map(c => c.displayOwner || c.user_id),
-      ...notes.map(n => n.dealOwner || n.userId).filter(Boolean),
-      ...dealMovements.map(d => d.dealOwner).filter(Boolean),
-      ...completedActivities.map(a => a.user_id).filter(Boolean),
-      ...wonDeals.map(d => d.user_id).filter(Boolean),
-      ...lostDeals.map(d => d.user_id).filter(Boolean)
-    ]);
-
+    // Initialize stats for each unique user
     allUserIds.forEach(userId => {
-      if (userId) {
-        ownerStats.set(userId, {
-          name: getUserName(userId),
-          callsMade: 0,
-          notesCreated: 0,
-          dealMovements: 0,
-          activitiesDone: 0,
-          dealsWon: 0,
-          dealsLost: 0
-        });
-      }
+      ownerStatsMap.set(userId, {
+        id: userId,
+        name: this.getUserName(userId, users),
+        callsMade: 0,
+        notesCreated: 0,
+        dealMovements: 0,
+        activitiesDone: 0,
+        dealsWon: 0,
+        dealsLost: 0
+      });
     });
 
-    // Count calls by owner
+    // Count activities for each user - no duplicates possible now
     callActivities.forEach(call => {
-      const ownerId = call.displayOwner || call.user_id;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).callsMade++;
+      const userId = this.normalizeUserId(call.user_id);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).callsMade++;
       }
     });
 
-    // Count notes by owner
     notes.forEach(note => {
-      const ownerId = note.dealOwner || note.userId;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).notesCreated++;
+      const userId = this.normalizeUserId(note.dealOwner || note.userId);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).notesCreated++;
       }
     });
 
-    // Count deal movements by owner
     dealMovements.forEach(movement => {
-      const ownerId = movement.dealOwner;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).dealMovements++;
+      const userId = this.normalizeUserId(movement.dealOwner);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).dealMovements++;
       }
     });
 
-    // Count completed activities by owner
     completedActivities.forEach(activity => {
-      const ownerId = activity.user_id;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).activitiesDone++;
+      const userId = this.normalizeUserId(activity.user_id);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).activitiesDone++;
       }
     });
 
-    // Count won deals by owner
     wonDeals.forEach(deal => {
-      const ownerId = deal.user_id;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).dealsWon++;
+      const userId = this.normalizeUserId(deal.user_id);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).dealsWon++;
       }
     });
 
-    // Count lost deals by owner
     lostDeals.forEach(deal => {
-      const ownerId = deal.user_id;
-      if (ownerId && ownerStats.has(ownerId)) {
-        ownerStats.get(ownerId).dealsLost++;
+      const userId = this.normalizeUserId(deal.user_id);
+      if (userId && ownerStatsMap.has(userId)) {
+        ownerStatsMap.get(userId).dealsLost++;
       }
     });
 
-    return Array.from(ownerStats.values()).filter(stats => 
+    // Convert map to array and filter out users with no activity
+    const result = Array.from(ownerStatsMap.values()).filter(stats => 
       stats.callsMade > 0 || stats.notesCreated > 0 || stats.dealMovements > 0 || 
       stats.activitiesDone > 0 || stats.dealsWon > 0 || stats.dealsLost > 0
     );
+
+    // Sort by total activity (most active first)
+    result.sort((a, b) => {
+      const totalA = a.callsMade + a.notesCreated + a.dealMovements + a.activitiesDone + a.dealsWon + a.dealsLost;
+      const totalB = b.callsMade + b.notesCreated + b.dealMovements + b.activitiesDone + b.dealsWon + b.dealsLost;
+      return totalB - totalA;
+    });
+
+    return result;
   }
 
+  // IMPROVED EMAIL DESIGN
   generateEmailHTML(analyticsData) {
-    const { date, totalStats, byOwner, detailedData } = analyticsData;
+    const { date, totalStats, byOwner } = analyticsData;
 
     return `
       <!DOCTYPE html>
@@ -356,29 +376,216 @@ class DailyAnalyticsEmailService {
         <meta charset="utf-8">
         <title>Daily Analytics Report - ${date}</title>
         <style>
-          body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
-          .container { max-width: 800px; margin: 0 auto; background: white; border-radius: 10px; padding: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-          .header { text-align: center; border-bottom: 3px solid #4f46e5; padding-bottom: 20px; margin-bottom: 30px; }
-          .header h1 { color: #4f46e5; margin: 0; font-size: 28px; }
-          .header p { color: #666; margin: 10px 0 0 0; font-size: 16px; }
-          .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
-          .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; }
-          .stat-card.green { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); }
-          .stat-card.red { background: linear-gradient(135deg, #ee0979 0%, #ff6a00 100%); }
-          .stat-card.blue { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); }
-          .stat-card h3 { margin: 0 0 10px 0; font-size: 16px; opacity: 0.9; }
-          .stat-card .number { font-size: 32px; font-weight: bold; margin: 0; }
-          .owner-section { margin-top: 30px; }
-          .owner-section h2 { color: #4f46e5; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }
-          .owner-card { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 15px; }
-          .owner-name { font-size: 18px; font-weight: bold; color: #374151; margin-bottom: 15px; }
-          .owner-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
-          .owner-stat { text-align: center; padding: 10px; background: white; border-radius: 6px; border: 1px solid #d1d5db; }
-          .owner-stat .label { font-size: 12px; color: #6b7280; text-transform: uppercase; margin-bottom: 5px; }
-          .owner-stat .value { font-size: 20px; font-weight: bold; color: #374151; }
-          .summary { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 20px; margin-top: 30px; }
-          .summary h3 { color: #1e40af; margin: 0 0 15px 0; }
-          .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; color: #6b7280; font-size: 14px; }
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0; 
+            padding: 20px; 
+            line-height: 1.6;
+          }
+          .container { 
+            max-width: 900px; 
+            margin: 0 auto; 
+            background: #ffffff; 
+            border-radius: 16px; 
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+          }
+          .header { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center; 
+            padding: 40px 30px;
+          }
+          .header h1 { 
+            font-size: 32px; 
+            font-weight: 700; 
+            margin-bottom: 8px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+          }
+          .header p { 
+            font-size: 18px; 
+            opacity: 0.9;
+            font-weight: 300;
+          }
+          .content { padding: 40px 30px; }
+          .stats-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+            gap: 24px; 
+            margin-bottom: 50px; 
+          }
+          .stat-card { 
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            padding: 28px; 
+            border-radius: 12px; 
+            text-align: center;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+          }
+          .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: var(--accent-color, #667eea);
+          }
+          .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.1);
+          }
+          .stat-card.calls::before { background: #3b82f6; }
+          .stat-card.notes::before { background: #8b5cf6; }
+          .stat-card.movements::before { background: #f59e0b; }
+          .stat-card.activities::before { background: #10b981; }
+          .stat-card.won::before { background: #059669; }
+          .stat-card.lost::before { background: #dc2626; }
+          
+          .stat-icon { 
+            font-size: 28px; 
+            margin-bottom: 12px; 
+            display: block;
+          }
+          .stat-card h3 { 
+            color: #374151; 
+            font-size: 16px; 
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+          }
+          .stat-card .number { 
+            font-size: 42px; 
+            font-weight: 800; 
+            color: #111827;
+            margin: 0;
+          }
+          
+          .section-title {
+            font-size: 24px;
+            font-weight: 700;
+            color: #111827;
+            margin: 0 0 30px 0;
+            text-align: center;
+            position: relative;
+          }
+          .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 3px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 2px;
+          }
+          
+          .team-grid {
+            display: grid;
+            gap: 20px;
+          }
+          .team-member { 
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px; 
+            overflow: hidden;
+            transition: all 0.3s ease;
+          }
+          .team-member:hover {
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            border-color: #d1d5db;
+          }
+          .member-header {
+            background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+            padding: 20px;
+            border-bottom: 1px solid #e5e7eb;
+          }
+          .member-name { 
+            font-size: 20px; 
+            font-weight: 700; 
+            color: #111827;
+            margin: 0;
+          }
+          .member-stats { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); 
+            padding: 0;
+          }
+          .member-stat { 
+            text-align: center; 
+            padding: 20px 12px;
+            border-right: 1px solid #e5e7eb;
+            transition: background-color 0.2s ease;
+          }
+          .member-stat:last-child { border-right: none; }
+          .member-stat:hover { background-color: #ffffff; }
+          .member-stat .label { 
+            font-size: 11px; 
+            color: #6b7280; 
+            text-transform: uppercase; 
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px; 
+          }
+          .member-stat .value { 
+            font-size: 24px; 
+            font-weight: 800; 
+            color: #111827;
+          }
+          
+          .summary { 
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border: 1px solid #bfdbfe;
+            border-radius: 12px; 
+            padding: 30px; 
+            margin-top: 40px;
+            text-align: center;
+          }
+          .summary h3 { 
+            color: #1e40af; 
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 16px; 
+          }
+          .summary p {
+            color: #1f2937;
+            font-size: 16px;
+            line-height: 1.7;
+            margin-bottom: 12px;
+          }
+          .summary strong { color: #111827; }
+          
+          .footer { 
+            text-align: center; 
+            margin-top: 40px; 
+            padding-top: 30px; 
+            border-top: 1px solid #e5e7eb; 
+            color: #6b7280; 
+            font-size: 14px;
+          }
+          .footer p { margin-bottom: 4px; }
+          
+          .no-activity {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+            font-style: italic;
+          }
+          
+          @media (max-width: 600px) {
+            .container { margin: 10px; border-radius: 12px; }
+            .header { padding: 30px 20px; }
+            .content { padding: 30px 20px; }
+            .stats-grid { grid-template-columns: 1fr; gap: 16px; }
+            .member-stats { grid-template-columns: repeat(3, 1fr); }
+            .member-stat { padding: 16px 8px; }
+          }
         </style>
       </head>
       <body>
@@ -388,88 +595,108 @@ class DailyAnalyticsEmailService {
             <p>${date}</p>
           </div>
 
-          <div class="stats-grid">
-            <div class="stat-card blue">
-              <h3>📞 Phone Calls</h3>
-              <p class="number">${totalStats.callsMade}</p>
+          <div class="content">
+            <div class="stats-grid">
+              <div class="stat-card calls">
+                <span class="stat-icon">📞</span>
+                <h3>Phone Calls</h3>
+                <p class="number">${totalStats.callsMade}</p>
+              </div>
+              <div class="stat-card notes">
+                <span class="stat-icon">📝</span>
+                <h3>Notes Created</h3>
+                <p class="number">${totalStats.notesCreated}</p>
+              </div>
+              <div class="stat-card movements">
+                <span class="stat-icon">🔄</span>
+                <h3>Deal Updates</h3>
+                <p class="number">${totalStats.dealMovements}</p>
+              </div>
+              <div class="stat-card activities">
+                <span class="stat-icon">✅</span>
+                <h3>Activities Done</h3>
+                <p class="number">${totalStats.activitiesDone}</p>
+              </div>
+              <div class="stat-card won">
+                <span class="stat-icon">🏆</span>
+                <h3>Deals Won</h3>
+                <p class="number">${totalStats.dealsWon}</p>
+              </div>
+              <div class="stat-card lost">
+                <span class="stat-icon">❌</span>
+                <h3>Deals Lost</h3>
+                <p class="number">${totalStats.dealsLost}</p>
+              </div>
             </div>
-            <div class="stat-card">
-              <h3>📝 Notes Created</h3>
-              <p class="number">${totalStats.notesCreated}</p>
-            </div>
-            <div class="stat-card">
-              <h3>🔄 Deal Movements</h3>
-              <p class="number">${totalStats.dealMovements}</p>
-            </div>
-            <div class="stat-card green">
-              <h3>✅ Activities Done</h3>
-              <p class="number">${totalStats.activitiesDone}</p>
-            </div>
-            <div class="stat-card green">
-              <h3>🏆 Deals Won</h3>
-              <p class="number">${totalStats.dealsWon}</p>
-            </div>
-            <div class="stat-card red">
-              <h3>❌ Deals Lost</h3>
-              <p class="number">${totalStats.dealsLost}</p>
-            </div>
-          </div>
 
-          ${byOwner.length > 0 ? `
-          <div class="owner-section">
-            <h2>👥 Performance by Team Member</h2>
-            ${byOwner.map(owner => `
-              <div class="owner-card">
-                <div class="owner-name">${owner.name}</div>
-                <div class="owner-stats">
-                  <div class="owner-stat">
-                    <div class="label">Calls</div>
-                    <div class="value">${owner.callsMade}</div>
+            ${byOwner.length > 0 ? `
+            <h2 class="section-title">👥 Team Performance</h2>
+            <div class="team-grid">
+              ${byOwner.map(owner => `
+                <div class="team-member">
+                  <div class="member-header">
+                    <h3 class="member-name">${owner.name}</h3>
                   </div>
-                  <div class="owner-stat">
-                    <div class="label">Notes</div>
-                    <div class="value">${owner.notesCreated}</div>
-                  </div>
-                  <div class="owner-stat">
-                    <div class="label">Movements</div>
-                    <div class="value">${owner.dealMovements}</div>
-                  </div>
-                  <div class="owner-stat">
-                    <div class="label">Activities</div>
-                    <div class="value">${owner.activitiesDone}</div>
-                  </div>
-                  <div class="owner-stat">
-                    <div class="label">Won</div>
-                    <div class="value">${owner.dealsWon}</div>
-                  </div>
-                  <div class="owner-stat">
-                    <div class="label">Lost</div>
-                    <div class="value">${owner.dealsLost}</div>
+                  <div class="member-stats">
+                    <div class="member-stat">
+                      <div class="label">Calls</div>
+                      <div class="value">${owner.callsMade}</div>
+                    </div>
+                    <div class="member-stat">
+                      <div class="label">Notes</div>
+                      <div class="value">${owner.notesCreated}</div>
+                    </div>
+                    <div class="member-stat">
+                      <div class="label">Updates</div>
+                      <div class="value">${owner.dealMovements}</div>
+                    </div>
+                    <div class="member-stat">
+                      <div class="label">Tasks</div>
+                      <div class="value">${owner.activitiesDone}</div>
+                    </div>
+                    <div class="member-stat">
+                      <div class="label">Won</div>
+                      <div class="value">${owner.dealsWon}</div>
+                    </div>
+                    <div class="member-stat">
+                      <div class="label">Lost</div>
+                      <div class="value">${owner.dealsLost}</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            `).join('')}
-          </div>
-          ` : ''}
+              `).join('')}
+            </div>
+            ` : `
+            <div class="no-activity">
+              <p>No individual activity recorded for yesterday.</p>
+            </div>
+            `}
 
-          <div class="summary">
-            <h3>📈 Summary</h3>
-            <p>
-              Yesterday, your team made <strong>${totalStats.callsMade} phone calls</strong> and created 
-              <strong>${totalStats.notesCreated} notes</strong>. There were <strong>${totalStats.dealMovements} deal movements</strong> 
-              and <strong>${totalStats.activitiesDone} activities completed</strong>.
-            </p>
-            ${totalStats.dealsWon > 0 || totalStats.dealsLost > 0 ? `
-            <p>
-              Deal outcomes: <strong style="color: #059669;">${totalStats.dealsWon} deals won</strong> 
-              ${totalStats.dealsLost > 0 ? `and <strong style="color: #dc2626;">${totalStats.dealsLost} deals lost</strong>` : ''}.
-            </p>
-            ` : ''}
-          </div>
+            <div class="summary">
+              <h3>📈 Daily Summary</h3>
+              <p>
+                Yesterday, your team made <strong>${totalStats.callsMade} phone calls</strong> and created 
+                <strong>${totalStats.notesCreated} notes</strong>. There were <strong>${totalStats.dealMovements} deal updates</strong> 
+                and <strong>${totalStats.activitiesDone} activities completed</strong>.
+              </p>
+              ${totalStats.dealsWon > 0 || totalStats.dealsLost > 0 ? `
+              <p>
+                Deal outcomes: <strong style="color: #059669;">${totalStats.dealsWon} deals won</strong>${totalStats.dealsLost > 0 ? ` and <strong style="color: #dc2626;">${totalStats.dealsLost} deals lost</strong>` : ''}.
+              </p>
+              ` : ''}
+            </div>
 
-          <div class="footer">
-            <p>Generated automatically by your Pipedrive Analytics System</p>
-            <p>Report generated at ${new Date().toLocaleString('en-CA')}</p>
+            <div class="footer">
+              <p><strong>Pipedrive Daily Analytics</strong></p>
+              <p>Generated on ${new Date().toLocaleString('en-CA', { 
+                timeZone: 'America/Toronto',
+                year: 'numeric',
+                month: 'long', 
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}</p>
+            </div>
           </div>
         </div>
       </body>
@@ -484,7 +711,7 @@ class DailyAnalyticsEmailService {
 
       const mailOptions = {
         from: this.emailConfig.user,
-        to: this.emailConfig.recipients, // Array of email addresses
+        to: this.emailConfig.recipients,
         subject: `📊 Daily Analytics Report - ${analyticsData.date}`,
         html: emailHTML
       };
@@ -499,13 +726,11 @@ class DailyAnalyticsEmailService {
     }
   }
 
-  // Method to send test email immediately
   async sendTestEmail() {
     console.log('Sending test email...');
     return await this.sendDailyAnalyticsEmail();
   }
 
-  // Method to stop the scheduler
   stopScheduler() {
     if (this.scheduledTask) {
       this.scheduledTask.stop();
