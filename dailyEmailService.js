@@ -12,7 +12,7 @@ class DailyAnalyticsEmailService {
 
   setupEmailTransporter() {
     // Configure your email service (Gmail, Outlook, etc.)
-    this.transporter = nodemailer.createTransporter({
+    this.transporter = nodemailer.createTransport({
       service: 'gmail', // or your email service
       auth: {
         user: this.emailConfig.user,
