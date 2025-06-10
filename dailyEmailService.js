@@ -1,4 +1,4 @@
-// dailyEmailService.js - FIXED VERSION
+// dailyEmailService.js - FIXED VERSION with correct notes fetching and smaller fonts
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 const { PipedriveAPI } = require('./pipedriveAPI');
@@ -11,7 +11,7 @@ class DailyAnalyticsEmailService {
   }
 
   setupEmailTransporter() {
-    this.transporter = nodemailer.createTransport({
+    this.transporter = nodemailer.createTransporter({
       service: 'gmail',
       auth: {
         user: this.emailConfig.user,
@@ -96,10 +96,10 @@ class DailyAnalyticsEmailService {
 
       await delay(300);
 
-      // Fetch notes
+      // Fetch notes using the corrected method from DealAnalytics.jsx
       let notes = [];
       try {
-        notes = await this.fetchNotesForDate(dateRange, allDeals);
+        notes = await this.fetchNewNotesOptimized(dateRange, allDeals, 'all');
       } catch (error) {
         console.error('Error fetching notes:', error);
         notes = [];
@@ -177,47 +177,87 @@ class DailyAnalyticsEmailService {
     }
   }
 
-  async fetchNotesForDate(dateRange, allDeals) {
+  // FIXED: Use the same logic as DealAnalytics.jsx
+  async fetchNewNotesOptimized(dateRange, allDeals, selectedPipeline = 'all') {
     try {
+      console.log('Fetching notes for date range:', dateRange);
+      
+      // Try to use date filtering if the API supports it
       const params = {
         limit: 500,
+        // Add date filters if supported by your API wrapper
         start_date: dateRange.startDate,
         end_date: dateRange.endDate
       };
-
+      
+      // Add delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
       const notesResponse = await PipedriveAPI.getNotes(params);
       const allNotes = notesResponse.data || [];
-
+      
+      console.log('Raw notes from API:', allNotes.length);
+      
+      // Create deal map for quick lookup
       const dealMap = new Map();
       allDeals.forEach(deal => {
         dealMap.set(deal.id, deal);
       });
-
+      
       const startDate = new Date(dateRange.startDate);
       const endDate = new Date(dateRange.endDate);
       endDate.setHours(23, 59, 59, 999);
-
-      return allNotes
+      
+      const filteredNotes = allNotes
         .filter(note => {
           if (!note.add_time) return false;
           const noteDate = new Date(note.add_time);
           return noteDate >= startDate && noteDate <= endDate;
         })
         .map(note => {
-          const deal = note.deal_id ? dealMap.get(note.deal_id) : null;
-          return {
-            id: note.id,
-            content: note.content || 'Note added',
-            dealId: note.deal_id,
-            dealTitle: deal ? deal.title : 'No Deal Associated',
-            dealOwner: deal ? this.normalizeUserId(deal.user_id) : null,
-            addTime: note.add_time,
-            userId: this.normalizeUserId(note.user_id)
-          };
-        });
-        
+          if (note.deal_id) {
+            const deal = dealMap.get(note.deal_id);
+            if (!deal || (selectedPipeline !== 'all' && deal.pipeline_id != selectedPipeline)) {
+              return null;
+            }
+            
+            return {
+              id: note.id,
+              content: note.content || 'Note added',
+              dealId: note.deal_id,
+              dealTitle: deal.title || 'Unknown Deal',
+              dealOwner: this.normalizeUserId(deal.user_id),
+              addTime: note.add_time,
+              userId: this.normalizeUserId(note.user_id),
+              updateTime: note.update_time
+            };
+          } else if (selectedPipeline === 'all') {
+            return {
+              id: note.id,
+              content: note.content || 'Note added',
+              dealId: null,
+              dealTitle: 'No Deal Associated',
+              dealOwner: null,
+              addTime: note.add_time,
+              userId: this.normalizeUserId(note.user_id),
+              updateTime: note.update_time
+            };
+          }
+          return null;
+        })
+        .filter(Boolean);
+      
+      console.log('Notes after filtering:', filteredNotes.length);
+      return filteredNotes;
+      
     } catch (error) {
-      console.error('Error fetching notes:', error);
+      console.error('Error fetching new notes:', error);
+      
+      if (error.message.includes('429')) {
+        console.warn('Rate limit exceeded for notes, skipping notes data for this load...');
+        return [];
+      }
+      
       return [];
     }
   }
@@ -365,7 +405,7 @@ class DailyAnalyticsEmailService {
     return result;
   }
 
-  // IMPROVED EMAIL DESIGN
+  // FIXED EMAIL DESIGN with smaller fonts
   generateEmailHTML(analyticsData) {
     const { date, totalStats, byOwner } = analyticsData;
 
@@ -382,45 +422,46 @@ class DailyAnalyticsEmailService {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             margin: 0; 
             padding: 20px; 
-            line-height: 1.6;
+            line-height: 1.5;
+            font-size: 14px;
           }
           .container { 
-            max-width: 900px; 
+            max-width: 800px; 
             margin: 0 auto; 
             background: #ffffff; 
-            border-radius: 16px; 
+            border-radius: 12px; 
             overflow: hidden;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.12);
           }
           .header { 
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             text-align: center; 
-            padding: 40px 30px;
+            padding: 30px 25px;
           }
           .header h1 { 
-            font-size: 32px; 
+            font-size: 24px; 
             font-weight: 700; 
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             text-shadow: 0 2px 4px rgba(0,0,0,0.3);
           }
           .header p { 
-            font-size: 18px; 
+            font-size: 16px; 
             opacity: 0.9;
             font-weight: 300;
           }
-          .content { padding: 40px 30px; }
+          .content { padding: 30px 25px; }
           .stats-grid { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
-            gap: 24px; 
-            margin-bottom: 50px; 
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 40px; 
           }
           .stat-card { 
             background: #ffffff;
             border: 1px solid #e5e7eb;
-            padding: 28px; 
-            border-radius: 12px; 
+            padding: 20px; 
+            border-radius: 10px; 
             text-align: center;
             transition: all 0.3s ease;
             position: relative;
@@ -432,12 +473,12 @@ class DailyAnalyticsEmailService {
             top: 0;
             left: 0;
             right: 0;
-            height: 4px;
+            height: 3px;
             background: var(--accent-color, #667eea);
           }
           .stat-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 12px 24px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.08);
           }
           .stat-card.calls::before { background: #3b82f6; }
           .stat-card.notes::before { background: #8b5cf6; }
@@ -447,94 +488,94 @@ class DailyAnalyticsEmailService {
           .stat-card.lost::before { background: #dc2626; }
           
           .stat-icon { 
-            font-size: 28px; 
-            margin-bottom: 12px; 
+            font-size: 20px; 
+            margin-bottom: 8px; 
             display: block;
           }
           .stat-card h3 { 
             color: #374151; 
-            font-size: 16px; 
+            font-size: 12px; 
             font-weight: 600;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
           }
           .stat-card .number { 
-            font-size: 42px; 
+            font-size: 28px; 
             font-weight: 800; 
             color: #111827;
             margin: 0;
           }
           
           .section-title {
-            font-size: 24px;
+            font-size: 18px;
             font-weight: 700;
             color: #111827;
-            margin: 0 0 30px 0;
+            margin: 0 0 25px 0;
             text-align: center;
             position: relative;
           }
           .section-title::after {
             content: '';
             position: absolute;
-            bottom: -8px;
+            bottom: -6px;
             left: 50%;
             transform: translateX(-50%);
-            width: 60px;
-            height: 3px;
+            width: 50px;
+            height: 2px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 2px;
+            border-radius: 1px;
           }
           
           .team-grid {
             display: grid;
-            gap: 20px;
+            gap: 16px;
           }
           .team-member { 
             background: #f9fafb;
             border: 1px solid #e5e7eb;
-            border-radius: 12px; 
+            border-radius: 10px; 
             overflow: hidden;
             transition: all 0.3s ease;
           }
           .team-member:hover {
-            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.08);
             border-color: #d1d5db;
           }
           .member-header {
             background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
-            padding: 20px;
+            padding: 16px;
             border-bottom: 1px solid #e5e7eb;
           }
           .member-name { 
-            font-size: 20px; 
+            font-size: 16px; 
             font-weight: 700; 
             color: #111827;
             margin: 0;
           }
           .member-stats { 
             display: grid; 
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); 
+            grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); 
             padding: 0;
           }
           .member-stat { 
             text-align: center; 
-            padding: 20px 12px;
+            padding: 14px 8px;
             border-right: 1px solid #e5e7eb;
             transition: background-color 0.2s ease;
           }
           .member-stat:last-child { border-right: none; }
           .member-stat:hover { background-color: #ffffff; }
           .member-stat .label { 
-            font-size: 11px; 
+            font-size: 10px; 
             color: #6b7280; 
             text-transform: uppercase; 
             font-weight: 600;
             letter-spacing: 0.5px;
-            margin-bottom: 6px; 
+            margin-bottom: 4px; 
           }
           .member-stat .value { 
-            font-size: 24px; 
+            font-size: 18px; 
             font-weight: 800; 
             color: #111827;
           }
@@ -542,49 +583,52 @@ class DailyAnalyticsEmailService {
           .summary { 
             background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
             border: 1px solid #bfdbfe;
-            border-radius: 12px; 
-            padding: 30px; 
-            margin-top: 40px;
+            border-radius: 10px; 
+            padding: 24px; 
+            margin-top: 30px;
             text-align: center;
           }
           .summary h3 { 
             color: #1e40af; 
-            font-size: 22px;
+            font-size: 16px;
             font-weight: 700;
-            margin-bottom: 16px; 
+            margin-bottom: 12px; 
           }
           .summary p {
             color: #1f2937;
-            font-size: 16px;
-            line-height: 1.7;
-            margin-bottom: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 8px;
           }
           .summary strong { color: #111827; }
           
           .footer { 
             text-align: center; 
-            margin-top: 40px; 
-            padding-top: 30px; 
+            margin-top: 30px; 
+            padding-top: 20px; 
             border-top: 1px solid #e5e7eb; 
             color: #6b7280; 
-            font-size: 14px;
+            font-size: 12px;
           }
-          .footer p { margin-bottom: 4px; }
+          .footer p { margin-bottom: 3px; }
           
           .no-activity {
             text-align: center;
-            padding: 40px;
+            padding: 30px;
             color: #6b7280;
             font-style: italic;
+            font-size: 14px;
           }
           
           @media (max-width: 600px) {
-            .container { margin: 10px; border-radius: 12px; }
-            .header { padding: 30px 20px; }
-            .content { padding: 30px 20px; }
-            .stats-grid { grid-template-columns: 1fr; gap: 16px; }
+            .container { margin: 10px; border-radius: 10px; }
+            .header { padding: 25px 20px; }
+            .content { padding: 25px 20px; }
+            .stats-grid { grid-template-columns: 1fr; gap: 14px; }
             .member-stats { grid-template-columns: repeat(3, 1fr); }
-            .member-stat { padding: 16px 8px; }
+            .member-stat { padding: 12px 6px; }
+            .stat-card .number { font-size: 24px; }
+            .member-stat .value { font-size: 16px; }
           }
         </style>
       </head>
@@ -687,7 +731,7 @@ class DailyAnalyticsEmailService {
             </div>
 
             <div class="footer">
-              <p><strong>Pipedrive Daily Analytics</strong></p>
+              <p><strong>Pipedrive Daily Analytics by SIMVANA Digital Agency</strong></p>
               <p>Generated on ${new Date().toLocaleString('en-CA', { 
                 timeZone: 'America/Toronto',
                 year: 'numeric',
