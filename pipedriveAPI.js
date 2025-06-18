@@ -1,10 +1,15 @@
 // Pipedrive API Service
 const PIPEDRIVE_API_TOKEN = 'cc8a0efcadd639ed8fd56a3efe0a33cbc8021473';
 const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
+const PIPEDRIVE_BASE_URL_V2 = 'https://api.pipedrive.com/v2';
 
 class PipedriveAPI {
   static async makeRequest(endpoint, options = {}) {
-    const url = `${PIPEDRIVE_BASE_URL}${endpoint}`;
+    // Determine which API version to use
+    const apiVersion = options.apiVersion || 'v1';
+    const baseUrl = apiVersion === 'v2' ? PIPEDRIVE_BASE_URL_V2 : PIPEDRIVE_BASE_URL_V1;
+    const url = `${baseUrl}${endpoint}`;
+    
     const params = new URLSearchParams({
       api_token: PIPEDRIVE_API_TOKEN,
       ...options.params
@@ -27,8 +32,8 @@ class PipedriveAPI {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error(`Pipedrive API Error (${endpoint}):`, error);
-      throw new Error(`Failed to fetch from ${endpoint}: ${error.message}`);
+      console.error(`Pipedrive API Error (${apiVersion}${endpoint}):`, error);
+      throw new Error(`Failed to fetch from ${apiVersion}${endpoint}: ${error.message}`);
     }
   }
 
@@ -42,13 +47,14 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/deals', { params });
+    return this.makeRequest('/deals', { params, apiVersion: 'v2' });
   }
 
   // Get deals by specific criteria
   static async getDealsByStatus(status) {
     return this.makeRequest('/deals', { 
-      params: { status, limit: 1000 } 
+      params: { status, limit: 1000 },
+      apiVersion: 'v2'
     });
   }
 
@@ -64,7 +70,7 @@ class PipedriveAPI {
       params.pipeline_id = pipelineId;
     }
     
-    return this.makeRequest('/deals', { params });
+    return this.makeRequest('/deals', { params, apiVersion: 'v2' });
   }
 
   // Get all activities with better filtering
@@ -74,7 +80,7 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/activities', { params });
+    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
   }
 
   // Get activities by date range - FIXED VERSION
@@ -85,7 +91,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params });
+    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
   }
 
   // Get activities by deal ID - NEW METHOD
@@ -95,7 +101,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params });
+    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
   }
 
   // Get call activities with associated deals - NEW METHOD
@@ -184,7 +190,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params });
+    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
   }
 
   // Get activities by type (e.g., 'call')
@@ -194,7 +200,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params });
+    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
   }
 
   // NEW: Get notes by date range
@@ -206,7 +212,7 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/notes', { params });
+    return this.makeRequest('/notes', { params, apiVersion: 'v1' });
   }
 
   // NEW: Get all notes with optional filtering
@@ -216,48 +222,48 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/notes', { params });
+    return this.makeRequest('/notes', { params, apiVersion: 'v1' });
   }
 
   // Get all users (team members)
   static async getUsers() {
-    return this.makeRequest('/users');
+    return this.makeRequest('/users', { apiVersion: 'v1' });
   }
 
-  // Get user by ID
+  // Get user by ID (v1)
   static async getUserById(userId) {
-    return this.makeRequest(`/users/${userId}`);
+    return this.makeRequest(`/users/${userId}`, { apiVersion: 'v1' });
   }
 
-  // Get all pipelines
+  // Get all pipelines (v1)
   static async getPipelines() {
-    return this.makeRequest('/pipelines');
+    return this.makeRequest('/pipelines', { apiVersion: 'v1' });
   }
 
-  // Get pipeline stages
+  // Get pipeline stages (v1)
   static async getStages(pipelineId = null) {
     const endpoint = pipelineId ? `/pipelines/${pipelineId}/stages` : '/stages';
-    return this.makeRequest(endpoint);
+    return this.makeRequest(endpoint, { apiVersion: 'v1' });
   }
 
-  // Get deal fields to understand custom fields
+  // Get deal fields to understand custom fields (v1)
   static async getDealFields() {
-    return this.makeRequest('/dealFields');
+    return this.makeRequest('/dealFields', { apiVersion: 'v1' });
   }
 
-  // Get activity fields
+  // Get activity fields (v1)
   static async getActivityFields() {
-    return this.makeRequest('/activityFields');
+    return this.makeRequest('/activityFields', { apiVersion: 'v1' });
   }
 
-  // Get organization details
+  // Get organization details (v1)
   static async getOrganizations(options = {}) {
     const params = {
       limit: 1000,
       ...options
     };
     
-    return this.makeRequest('/organizations', { params });
+    return this.makeRequest('/organizations', { params, apiVersion: 'v1' });
   }
 
   // Get persons (contacts)
@@ -267,7 +273,7 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/persons', { params });
+    return this.makeRequest('/persons', { params, apiVersion: 'v1' });
   }
 
   // Analytics helper methods
@@ -353,7 +359,7 @@ class PipedriveAPI {
   }
 
   static async getDealHistory(dealId) {
-    return this.makeRequest(`/deals/${dealId}/flow`);
+    return this.makeRequest(`/deals/${dealId}/flow`, { apiVersion: 'v1' });
   }
 
   static async getDealsWithHistory(options = {}) {
@@ -363,7 +369,7 @@ class PipedriveAPI {
       ...options
     };
     
-    const dealsResponse = await this.makeRequest('/deals', { params });
+    const dealsResponse = await this.makeRequest('/deals', { params, apiVersion: 'v1' });
     const deals = dealsResponse.data || [];
     
     // Get history for each deal (this might be slow for many deals)
@@ -459,7 +465,7 @@ class PipedriveAPI {
   // Test API connection
   static async testConnection() {
     try {
-      const response = await this.makeRequest('/users/me');
+      const response = await this.makeRequest('/users/me', { apiVersion: 'v1' });
       return {
         success: true,
         data: response.data,
