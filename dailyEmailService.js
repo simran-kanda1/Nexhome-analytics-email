@@ -1,4 +1,4 @@
-// dailyEmailService.js - FIXED VERSION with correct notes fetching and smaller fonts
+// dailyEmailService.js - FIXED VERSION with proper call detection from pipedriveAPI.js
 const nodemailer = require('nodemailer');
 const cron = require('node-cron');
 const { PipedriveAPI } = require('./pipedriveAPI');
@@ -11,7 +11,7 @@ class DailyAnalyticsEmailService {
   }
 
   setupEmailTransporter() {
-    this.transporter = nodemailer.createTransport({
+    this.transporter = nodemailer.createTransporter({
       service: 'gmail',
       auth: {
         user: this.emailConfig.user,
@@ -49,6 +49,34 @@ class DailyAnalyticsEmailService {
     const normalizedId = this.normalizeUserId(userId);
     const user = users.find(u => u.id === normalizedId);
     return user ? user.name : `User ${normalizedId}`;
+  }
+
+  // FIXED: Enhanced call detection using the same logic as pipedriveAPI.js
+  filterCallActivities(activities) {
+    const callActivities = activities.filter(activity => {
+      const isCall = (
+        activity.type === 'call' ||
+        activity.key_string === 'call' ||
+        (activity.key_string && activity.key_string.toLowerCase().includes('call')) ||
+        (activity.subject && activity.subject.toLowerCase().includes('call')) ||
+        (activity.note && activity.note.toLowerCase().includes('call')) ||
+        // Check for JustCall integration patterns
+        (activity.subject && activity.subject.includes('Outgoing Call')) ||
+        (activity.subject && activity.subject.includes('Incoming Call')) ||
+        (activity.note && activity.note.includes('Call Recording')) ||
+        // Check for call recording URLs
+        (activity.note && activity.note.includes('justcall.io/recordings/'))
+      );
+      
+      if (isCall) {
+        console.log(`Found call activity: ${activity.id} - ${activity.subject || activity.key_string}`);
+      }
+      
+      return isCall;
+    });
+
+    console.log(`Total activities: ${activities.length}, Call activities found: ${callActivities.length}`);
+    return callActivities;
   }
 
   async fetchYesterdayAnalytics() {
@@ -89,14 +117,12 @@ class DailyAnalyticsEmailService {
       const users = usersResponse.data || [];
       const pipelines = pipelinesResponse.data || [];
 
-      // Filter call activities from the activities we already fetched
-      const callActivities = allActivities.filter(activity => 
-        activity.type === 'call' || (activity.key_string && activity.key_string.includes('call'))
-      );
+      // FIXED: Use enhanced call detection logic
+      const callActivities = this.filterCallActivities(allActivities);
 
       await delay(300);
 
-      // Fetch notes using the corrected method from DealAnalytics.jsx
+      // Fetch notes using the corrected method
       let notes = [];
       try {
         notes = await this.fetchNewNotesOptimized(dateRange, allDeals, 'all');
@@ -135,7 +161,7 @@ class DailyAnalyticsEmailService {
         return completedDate >= startDate && completedDate <= endDate;
       });
 
-      // Calculate analytics by owner - FIXED
+      // Calculate analytics by owner
       const analyticsData = this.calculateAnalyticsByOwner({
         callActivities,
         notes,
@@ -177,7 +203,133 @@ class DailyAnalyticsEmailService {
     }
   }
 
-  // FIXED: Use the same logic as DealAnalytics.jsx
+  // ALTERNATIVE: Use the dedicated method from pipedriveAPI.js
+  async fetchYesterdayAnalyticsWithDedicatedMethod() {
+    try {
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      yesterday.setHours(0, 0, 0, 0);
+      
+      const endOfYesterday = new Date(yesterday);
+      endOfYesterday.setHours(23, 59, 59, 999);
+
+      const dateRange = {
+        startDate: yesterday.toISOString().split('T')[0],
+        endDate: endOfYesterday.toISOString().split('T')[0]
+      };
+
+      console.log('Fetching analytics for:', dateRange);
+
+      const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+      // Use the dedicated method from pipedriveAPI.js for calls
+      const [
+        dealsResponse,
+        callActivitiesResponse,
+        usersResponse,
+        pipelinesResponse
+      ] = await Promise.all([
+        PipedriveAPI.getDeals(),
+        PipedriveAPI.getCallActivitiesWithDeals(dateRange.startDate, dateRange.endDate),
+        PipedriveAPI.getUsers(),
+        PipedriveAPI.getPipelines()
+      ]);
+
+      await delay(300);
+
+      const allDeals = dealsResponse.data || [];
+      const callActivitiesData = callActivitiesResponse.data || [];
+      const users = usersResponse.data || [];
+      const pipelines = pipelinesResponse.data || [];
+
+      // Get all activities for other calculations
+      const allActivitiesResponse = await PipedriveAPI.getActivitiesByDateRange(dateRange.startDate, dateRange.endDate);
+      const allActivities = allActivitiesResponse.data || [];
+
+      await delay(300);
+
+      // Fetch notes
+      let notes = [];
+      try {
+        notes = await this.fetchNewNotesOptimized(dateRange, allDeals, 'all');
+      } catch (error) {
+        console.error('Error fetching notes:', error);
+        notes = [];
+      }
+
+      await delay(300);
+
+      const dealMovements = await this.fetchDealMovements(dateRange, allDeals, pipelines);
+
+      // Filter data for yesterday
+      const startDate = new Date(dateRange.startDate);
+      const endDate = new Date(dateRange.endDate);
+      endDate.setHours(23, 59, 59, 999);
+
+      // Won deals yesterday
+      const wonDeals = allDeals.filter(deal => {
+        if (deal.status !== 'won' || !deal.won_time) return false;
+        const wonDate = new Date(deal.won_time);
+        return wonDate >= startDate && wonDate <= endDate;
+      });
+
+      // Lost deals yesterday
+      const lostDeals = allDeals.filter(deal => {
+        if (deal.status !== 'lost' || !deal.lost_time) return false;
+        const lostDate = new Date(deal.lost_time);
+        return lostDate >= startDate && lostDate <= endDate;
+      });
+
+      // Activities completed yesterday
+      const completedActivities = allActivities.filter(activity => {
+        if (!activity.done || !activity.marked_as_done_time) return false;
+        const completedDate = new Date(activity.marked_as_done_time);
+        return completedDate >= startDate && completedDate <= endDate;
+      });
+
+      // Calculate analytics by owner
+      const analyticsData = this.calculateAnalyticsByOwner({
+        callActivities: callActivitiesData,
+        notes,
+        dealMovements,
+        completedActivities,
+        wonDeals,
+        lostDeals,
+        users
+      });
+
+      return {
+        date: yesterday.toLocaleDateString('en-CA', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        }),
+        totalStats: {
+          callsMade: callActivitiesData.length,
+          notesCreated: notes.length,
+          dealMovements: dealMovements.length,
+          activitiesDone: completedActivities.length,
+          dealsWon: wonDeals.length,
+          dealsLost: lostDeals.length
+        },
+        byOwner: analyticsData,
+        detailedData: {
+          wonDeals,
+          lostDeals,
+          callActivities: callActivitiesData,
+          notes,
+          dealMovements
+        }
+      };
+
+    } catch (error) {
+      console.error('Error fetching yesterday analytics:', error);
+      throw error;
+    }
+  }
+
+  // Use the same logic as DealAnalytics.jsx
   async fetchNewNotesOptimized(dateRange, allDeals, selectedPipeline = 'all') {
     try {
       console.log('Fetching notes for date range:', dateRange);
@@ -291,7 +443,6 @@ class DailyAnalyticsEmailService {
     }
   }
 
-  // COMPLETELY REWRITTEN - This was the main source of duplicates
   calculateAnalyticsByOwner(data) {
     const { callActivities, notes, dealMovements, completedActivities, wonDeals, lostDeals, users } = data;
     
@@ -405,7 +556,7 @@ class DailyAnalyticsEmailService {
     return result;
   }
 
-  // FIXED EMAIL DESIGN with smaller fonts
+  // Email HTML generation (unchanged)
   generateEmailHTML(analyticsData) {
     const { date, totalStats, byOwner } = analyticsData;
 
