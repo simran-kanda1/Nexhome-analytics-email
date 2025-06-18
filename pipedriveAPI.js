@@ -1,6 +1,6 @@
 // Pipedrive API Service
 const PIPEDRIVE_API_TOKEN = 'cc8a0efcadd639ed8fd56a3efe0a33cbc8021473';
-const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
+const PIPEDRIVE_BASE_URL_V1 = 'https://api.pipedrive.com/v1';
 const PIPEDRIVE_BASE_URL_V2 = 'https://api.pipedrive.com/v2';
 
 class PipedriveAPI {
