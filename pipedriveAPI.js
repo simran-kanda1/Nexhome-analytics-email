@@ -35,7 +35,7 @@ class PipedriveAPI {
   // Get all deals with pagination support
   static async getDeals(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       status: 'all_not_deleted',
       // Add these fields to get more complete data
       include_fields: 'id,title,value,currency,status,probability,add_time,update_time,close_time,won_time,lost_time,lost_reason,stage_id,stage_name,pipeline_id,user_id,person_id,org_id,person_name,org_name',
@@ -48,7 +48,7 @@ class PipedriveAPI {
   // Get deals by specific criteria
   static async getDealsByStatus(status) {
     return this.makeRequest('/deals', { 
-      params: { status, limit: 500 } 
+      params: { status, limit: 1000 } 
     });
   }
 
@@ -57,7 +57,7 @@ class PipedriveAPI {
     const params = {
       start_time: startDate, // Use start_time instead of start_date
       end_time: endDate,     // Use end_time instead of end_date
-      limit: 500
+      limit: 1000
     };
     
     if (pipelineId && pipelineId !== 'all') {
@@ -70,7 +70,7 @@ class PipedriveAPI {
   // Get all activities with better filtering
   static async getActivities(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       ...options
     };
     
@@ -82,7 +82,7 @@ class PipedriveAPI {
     const params = {
       start_date: startDate,
       end_date: endDate,
-      limit: 500
+      limit: 1000
     };
     
     return this.makeRequest('/activities', { params });
@@ -92,7 +92,7 @@ class PipedriveAPI {
   static async getActivitiesByDealId(dealId) {
     const params = {
       deal_id: dealId,
-      limit: 500
+      limit: 1000
     };
     
     return this.makeRequest('/activities', { params });
@@ -152,7 +152,7 @@ class PipedriveAPI {
     const params = {
       due_date: `<${today}`,
       done: 0,
-      limit: 500
+      limit: 1000
     };
     
     return this.makeRequest('/activities', { params });
@@ -162,7 +162,7 @@ class PipedriveAPI {
   static async getActivitiesByType(type) {
     const params = {
       type,
-      limit: 500
+      limit: 1000
     };
     
     return this.makeRequest('/activities', { params });
@@ -173,7 +173,7 @@ class PipedriveAPI {
     const params = {
       start_date: startDate,
       end_date: endDate,
-      limit: 500,
+      limit: 1000,
       ...options
     };
     
@@ -183,7 +183,7 @@ class PipedriveAPI {
   // NEW: Get all notes with optional filtering
   static async getNotes(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       ...options
     };
     
@@ -224,7 +224,7 @@ class PipedriveAPI {
   // Get organization details
   static async getOrganizations(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       ...options
     };
     
@@ -234,7 +234,7 @@ class PipedriveAPI {
   // Get persons (contacts)
   static async getPersons(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       ...options
     };
     
@@ -329,7 +329,7 @@ class PipedriveAPI {
 
   static async getDealsWithHistory(options = {}) {
     const params = {
-      limit: 500,
+      limit: 1000,
       status: 'all_not_deleted',
       ...options
     };
