@@ -101,14 +101,38 @@ class PipedriveAPI {
   // Get call activities with associated deals - NEW METHOD
   static async getCallActivitiesWithDeals(startDate, endDate) {
     try {
-      // Get all call activities in date range
+      console.log(`Fetching activities for date range: ${startDate} to ${endDate}`);
+      
+      // Get all activities in date range
       const activitiesResponse = await this.getActivitiesByDateRange(startDate, endDate);
       const allActivities = activitiesResponse.data || [];
       
-      // Filter for call activities
-      const callActivities = allActivities.filter(activity => 
-        activity.type === 'call' || (activity.key_string && activity.key_string.includes('call'))
-      );
+      console.log(`Total activities found: ${allActivities.length}`);
+      
+      // Enhanced call detection - check multiple patterns
+      const callActivities = allActivities.filter(activity => {
+        const isCall = (
+          activity.type === 'call' ||
+          activity.key_string === 'call' ||
+          (activity.key_string && activity.key_string.toLowerCase().includes('call')) ||
+          (activity.subject && activity.subject.toLowerCase().includes('call')) ||
+          (activity.note && activity.note.toLowerCase().includes('call')) ||
+          // Check for JustCall integration patterns
+          (activity.subject && activity.subject.includes('Outgoing Call')) ||
+          (activity.subject && activity.subject.includes('Incoming Call')) ||
+          (activity.note && activity.note.includes('Call Recording'))
+          // Check for call recording URLs
+          (activity.note && activity.note.includes('justcall.io/recordings/'))
+        );
+        
+        if (isCall) {
+          console.log(`Found call activity: ${activity.id} - ${activity.subject || activity.key_string}`);
+        }
+        
+        return isCall;
+      });
+
+      console.log(`Call activities found: ${callActivities.length}`);
 
       // Get associated deals for each call
       const callsWithDeals = await Promise.all(
@@ -138,7 +162,12 @@ class PipedriveAPI {
       return {
         success: true,
         data: callsWithDeals,
-        total: callsWithDeals.length
+        total: callsWithDeals.length,
+        debug: {
+          totalActivities: allActivities.length,
+          callActivities: callActivities.length,
+          dateRange: { startDate, endDate }
+        }
       };
     } catch (error) {
       console.error('Error fetching call activities with deals:', error);
