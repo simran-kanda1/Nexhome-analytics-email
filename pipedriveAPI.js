@@ -80,7 +80,7 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities/collection', { params, apiVersion: 'v1' });
   }
 
   // Get activities by date range - FIXED VERSION
@@ -91,7 +91,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities/collection', { params, apiVersion: 'v1' });
   }
 
   // Get activities by deal ID - NEW METHOD
@@ -101,7 +101,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities/collection', { params, apiVersion: 'v1' });
   }
 
   // Get call activities with associated deals - NEW METHOD
@@ -190,7 +190,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities/collection', { params, apiVersion: 'v1' });
   }
 
   // Get activities by type (e.g., 'call')
@@ -200,7 +200,7 @@ class PipedriveAPI {
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities/collection', { params, apiVersion: 'v1' });
   }
 
   // NEW: Get notes by date range
