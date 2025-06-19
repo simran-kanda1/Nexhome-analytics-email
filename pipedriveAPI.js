@@ -1,15 +1,10 @@
-// Pipedrive API Service - Updated with correct endpoints
+// Pipedrive API Service
 const PIPEDRIVE_API_TOKEN = 'cc8a0efcadd639ed8fd56a3efe0a33cbc8021473';
-const PIPEDRIVE_BASE_URL_V1 = 'https://api.pipedrive.com/v1';
-const PIPEDRIVE_BASE_URL_V2 = 'https://api.pipedrive.com/api/v2'; // Note: v2 uses /api/v2 not /v2
+const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
 
 class PipedriveAPI {
   static async makeRequest(endpoint, options = {}) {
-    // Determine which API version to use
-    const apiVersion = options.apiVersion || 'v1';
-    const baseUrl = apiVersion === 'v2' ? PIPEDRIVE_BASE_URL_V2 : PIPEDRIVE_BASE_URL_V1;
-    const url = `${baseUrl}${endpoint}`;
-    
+    const url = `${PIPEDRIVE_BASE_URL}${endpoint}`;
     const params = new URLSearchParams({
       api_token: PIPEDRIVE_API_TOKEN,
       ...options.params
@@ -32,35 +27,36 @@ class PipedriveAPI {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error(`Pipedrive API Error (${apiVersion}${endpoint}):`, error);
-      throw new Error(`Failed to fetch from ${apiVersion}${endpoint}: ${error.message}`);
+      console.error(`Pipedrive API Error (${endpoint}):`, error);
+      throw new Error(`Failed to fetch from ${endpoint}: ${error.message}`);
     }
   }
 
-  // Get all deals with pagination support - UPDATED to use v2
+  // Get all deals with pagination support
   static async getDeals(options = {}) {
     const params = {
       limit: 1000,
       status: 'all_not_deleted',
-      // V2 API uses different field inclusion syntax
+      // Add these fields to get more complete data
+      include_fields: 'id,title,value,currency,status,probability,add_time,update_time,close_time,won_time,lost_time,lost_reason,stage_id,stage_name,pipeline_id,user_id,person_id,org_id,person_name,org_name',
       ...options
     };
     
-    return this.makeRequest('/deals', { params, apiVersion: 'v2' });
+    return this.makeRequest('/deals', { params });
   }
 
-  // Get deals by specific criteria - UPDATED to use v2
+  // Get deals by specific criteria
   static async getDealsByStatus(status) {
     return this.makeRequest('/deals', { 
-      params: { status, limit: 1000 },
-      apiVersion: 'v2'
+      params: { status, limit: 1000 } 
     });
   }
 
-  // Get deals by date range - UPDATED for v2 API
+  // Get deals by date range - FIXED VERSION
   static async getDealsByDateRange(startDate, endDate, pipelineId = null) {
     const params = {
-      'add_time': `${startDate}:${endDate}`, // v2 uses different date range format
+      start_time: startDate, // Use start_time instead of start_date
+      end_time: endDate,     // Use end_time instead of end_date
       limit: 1000
     };
     
@@ -68,45 +64,46 @@ class PipedriveAPI {
       params.pipeline_id = pipelineId;
     }
     
-    return this.makeRequest('/deals', { params, apiVersion: 'v2' });
+    return this.makeRequest('/deals', { params });
   }
 
-  // Get all activities - UPDATED to use v2 (was /v1/activities/collection)
+  // Get all activities with better filtering
   static async getActivities(options = {}) {
     const params = {
       limit: 1000,
       ...options
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities', { params });
   }
 
-  // Get activities by date range - UPDATED to use v2
+  // Get activities by date range - FIXED VERSION
   static async getActivitiesByDateRange(startDate, endDate) {
     const params = {
-      'add_time': `${startDate}:${endDate}`, // v2 uses colon-separated date ranges
+      start_date: startDate,
+      end_date: endDate,
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities', { params });
   }
 
-  // Get activities by deal ID - UPDATED to use v2 query parameter
+  // Get activities by deal ID - NEW METHOD
   static async getActivitiesByDealId(dealId) {
     const params = {
       deal_id: dealId,
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities', { params });
   }
 
-  // Get call activities with associated deals - UPDATED for v2
+  // Get call activities with associated deals - NEW METHOD
   static async getCallActivitiesWithDeals(startDate, endDate) {
     try {
       console.log(`Fetching activities for date range: ${startDate} to ${endDate}`);
       
-      // Get all activities in date range using v2 API
+      // Get all activities in date range
       const activitiesResponse = await this.getActivitiesByDateRange(startDate, endDate);
       const allActivities = activitiesResponse.data || [];
       
@@ -123,7 +120,7 @@ class PipedriveAPI {
           // Check for JustCall integration patterns
           (activity.subject && activity.subject.includes('Outgoing Call')) ||
           (activity.subject && activity.subject.includes('Incoming Call')) ||
-          (activity.note && activity.note.includes('Call Recording')) ||
+          (activity.note && activity.note.includes('Call Recording'))
           // Check for call recording URLs
           (activity.note && activity.note.includes('justcall.io/recordings/'))
         );
@@ -137,12 +134,12 @@ class PipedriveAPI {
 
       console.log(`Call activities found: ${callActivities.length}`);
 
-      // Get associated deals for each call using v2 API
+      // Get associated deals for each call
       const callsWithDeals = await Promise.all(
         callActivities.map(async (activity) => {
           if (activity.deal_id) {
             try {
-              const dealResponse = await this.makeRequest(`/deals/${activity.deal_id}`, { apiVersion: 'v2' });
+              const dealResponse = await this.makeRequest(`/deals/${activity.deal_id}`);
               return {
                 ...activity,
                 deal: dealResponse.data
@@ -178,29 +175,29 @@ class PipedriveAPI {
     }
   }
 
-  // Get overdue activities - UPDATED for v2
+  // Get overdue activities
   static async getOverdueActivities() {
     const today = new Date().toISOString().split('T')[0];
     const params = {
-      'due_date': `<${today}`, // v2 might handle this differently, may need adjustment
+      due_date: `<${today}`,
       done: 0,
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities', { params });
   }
 
-  // Get activities by type - UPDATED for v2
+  // Get activities by type (e.g., 'call')
   static async getActivitiesByType(type) {
     const params = {
       type,
       limit: 1000
     };
     
-    return this.makeRequest('/activities', { params, apiVersion: 'v2' });
+    return this.makeRequest('/activities', { params });
   }
 
-  // Get notes by date range - NOTES still use v1 (not deprecated)
+  // NEW: Get notes by date range
   static async getNotesByDateRange(startDate, endDate, options = {}) {
     const params = {
       start_date: startDate,
@@ -209,82 +206,85 @@ class PipedriveAPI {
       ...options
     };
     
-    return this.makeRequest('/notes', { params, apiVersion: 'v1' });
+    return this.makeRequest('/notes', { params });
   }
 
-  // Get all notes - NOTES still use v1 (not deprecated)
+  // NEW: Get all notes with optional filtering
   static async getNotes(options = {}) {
     const params = {
       limit: 1000,
       ...options
     };
     
-    return this.makeRequest('/notes', { params, apiVersion: 'v1' });
+    return this.makeRequest('/notes', { params });
   }
 
-  // Get all users - USERS still use v1 (not deprecated)
+  // Get all users (team members)
   static async getUsers() {
-    return this.makeRequest('/users', { apiVersion: 'v1' });
+    return this.makeRequest('/users');
   }
 
-  // Get user by ID - USERS still use v1 (not deprecated)
+  // Get user by ID
   static async getUserById(userId) {
-    return this.makeRequest(`/users/${userId}`, { apiVersion: 'v1' });
+    return this.makeRequest(`/users/${userId}`);
   }
 
-  // Get all pipelines - UPDATED to use v2
+  // Get all pipelines
   static async getPipelines() {
-    return this.makeRequest('/pipelines', { apiVersion: 'v2' });
+    return this.makeRequest('/pipelines');
   }
 
-  // Get pipeline stages - UPDATED to use v2
+  // Get pipeline stages
   static async getStages(pipelineId = null) {
     const endpoint = pipelineId ? `/pipelines/${pipelineId}/stages` : '/stages';
-    return this.makeRequest(endpoint, { apiVersion: 'v2' });
+    return this.makeRequest(endpoint);
   }
 
-  // Get deal fields - DEALFIELDS still use v1 (not deprecated)
+  // Get deal fields to understand custom fields
   static async getDealFields() {
-    return this.makeRequest('/dealFields', { apiVersion: 'v1' });
+    return this.makeRequest('/dealFields');
   }
 
-  // Get activity fields - ACTIVITYFIELDS still use v1 (not deprecated)
+  // Get activity fields
   static async getActivityFields() {
-    return this.makeRequest('/activityFields', { apiVersion: 'v1' });
+    return this.makeRequest('/activityFields');
   }
 
-  // Get organizations - UPDATED to use v2
+  // Get organization details
   static async getOrganizations(options = {}) {
     const params = {
       limit: 1000,
       ...options
     };
     
-    return this.makeRequest('/organizations', { params, apiVersion: 'v2' });
+    return this.makeRequest('/organizations', { params });
   }
 
-  // Get persons - UPDATED to use v2
+  // Get persons (contacts)
   static async getPersons(options = {}) {
     const params = {
       limit: 1000,
       ...options
     };
     
-    return this.makeRequest('/persons', { params, apiVersion: 'v2' });
+    return this.makeRequest('/persons', { params });
   }
 
-  // Analytics helper methods - UPDATED for v2
+  // Analytics helper methods
   static async getDealsAnalytics(timeFrame = 'today') {
     try {
       const { startDate, endDate } = this.getDateRange(timeFrame);
       
-      // Get deals within date range using v2
-      const dealsResponse = await this.getDealsByDateRange(startDate, endDate);
+      // Get deals within date range
+      const dealsResponse = await this.getDeals({
+        start_date: startDate,
+        end_date: endDate
+      });
 
-      // Get activities (calls) within date range using v2
+      // Get activities (calls) within date range  
       const activitiesResponse = await this.getActivitiesByDateRange(startDate, endDate);
       
-      // Get overdue activities using v2
+      // Get overdue activities
       const overdueResponse = await this.getOverdueActivities();
 
       return {
@@ -302,9 +302,9 @@ class PipedriveAPI {
   static async getOwnerAnalytics() {
     try {
       const [usersResponse, dealsResponse, activitiesResponse] = await Promise.all([
-        this.getUsers(), // v1 (still valid)
-        this.getDeals(), // v2
-        this.getActivities() // v2
+        this.getUsers(),
+        this.getDeals(),
+        this.getActivities()
       ]);
 
       const users = usersResponse.data || [];
@@ -352,12 +352,10 @@ class PipedriveAPI {
     }
   }
 
-  // Get deal history/flow - DEAL FLOW still uses v1 (not deprecated)
   static async getDealHistory(dealId) {
-    return this.makeRequest(`/deals/${dealId}/flow`, { apiVersion: 'v1' });
+    return this.makeRequest(`/deals/${dealId}/flow`);
   }
 
-  // Get deals with history - MIXED v2 for deals, v1 for flow
   static async getDealsWithHistory(options = {}) {
     const params = {
       limit: 1000,
@@ -365,10 +363,10 @@ class PipedriveAPI {
       ...options
     };
     
-    const dealsResponse = await this.makeRequest('/deals', { params, apiVersion: 'v2' });
+    const dealsResponse = await this.makeRequest('/deals', { params });
     const deals = dealsResponse.data || [];
     
-    // Get history for each deal using v1 (flow endpoint not deprecated)
+    // Get history for each deal (this might be slow for many deals)
     const dealsWithHistory = await Promise.all(
       deals.map(async (deal) => {
         try {
@@ -393,7 +391,7 @@ class PipedriveAPI {
     };
   }
 
-  // Helper method to get date ranges - UPDATED for v2 format
+  // Helper method to get date ranges - FIXED VERSION
   static getDateRange(timeFrame) {
     const today = new Date();
     today.setHours(0, 0, 0, 0); // Normalize to start of day
@@ -439,8 +437,8 @@ class PipedriveAPI {
     }
   
     return {
-      startDate: startDate.toISOString(),
-      endDate: endDate.toISOString()
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: endDate.toISOString().split('T')[0]
     };
   }
 
@@ -461,7 +459,7 @@ class PipedriveAPI {
   // Test API connection
   static async testConnection() {
     try {
-      const response = await this.makeRequest('/users/me', { apiVersion: 'v1' });
+      const response = await this.makeRequest('/users/me');
       return {
         success: true,
         data: response.data,
